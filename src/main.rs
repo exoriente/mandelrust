@@ -96,10 +96,7 @@ fn z_to_color(z: i32, steps: u32) -> Color {
     }
 }
 
-fn draw(view: &View, canvas: &mut im::ImageBuffer<im::Rgba<u8>, Vec<u8>>) {
-    let width = canvas.width();
-    let height = canvas.height();
-
+fn draw_fast(view: &View, width: u32, height: u32) -> im::ImageBuffer<im::Rgba<u8>, Vec<u8>> {
     let all_x = 0..width;
     let all_y = 0..height;
 
@@ -107,7 +104,7 @@ fn draw(view: &View, canvas: &mut im::ImageBuffer<im::Rgba<u8>, Vec<u8>>) {
         |(x, y)| {
             (x, y, 
             z_to_color(
-                circle(
+                mandelbrot(
                     view.pixel_to_complex((width, height), (x, y)),
                     view.sharpness,
                 ),
@@ -116,20 +113,24 @@ fn draw(view: &View, canvas: &mut im::ImageBuffer<im::Rgba<u8>, Vec<u8>>) {
         }
     ).collect::<Vec<_>>();
 
+    let mut canvas = im::ImageBuffer::new(width, height);
+
     for (x, y, color) in pixels {
         canvas.put_pixel(x, y, im::Rgba(color));
     }
+
+    return canvas
 }
 
 
-fn draw_fast(view: &View, width: u32, height: u32) -> im::ImageBuffer<im::Rgba<u8>, Vec<u8>> {
+fn draw_texture(view: &View, width: u32, height: u32) -> im::ImageBuffer<im::Rgba<u8>, Vec<u8>> {
     let all_x = 0..width;
     let all_y = 0..height;
 
-    let pixels = iproduct!(all_x, all_y).map(
-        |(x, y)| {
+    let pixels = iproduct!(all_y, all_x).map(
+        |(y, x)| {
             z_to_color(
-                circle(
+                mandelbrot(
                     view.pixel_to_complex((width, height), (x, y)),
                     view.sharpness,
                 ),
@@ -150,18 +151,7 @@ fn main() {
         .graphics_api(opengl)
         .build()
         .unwrap();
-
-    let mut canvas = im::ImageBuffer::new(width, height);
-    let mut redraw = false;
-    let mut texture_context = TextureContext {
-        factory: window.factory.clone(),
-        encoder: window.factory.create_command_buffer().into(),
-    };
-    let mut texture: G2dTexture =
-        Texture::from_image(&mut texture_context, &canvas, &TextureSettings::new()).unwrap();
-
-    let mut last_pos: Option<[f64; 2]> = None;
-
+    
     let mut view = View {
         r: -0.5,
         i: 0.,
@@ -169,7 +159,13 @@ fn main() {
         sharpness: 30,
     };
 
-    draw(&view, &mut canvas);
+    let mut canvas = draw_fast(&view, width, height);
+    let mut texture_context = TextureContext {
+        factory: window.factory.clone(),
+        encoder: window.factory.create_command_buffer().into(),
+    };
+    let mut texture: G2dTexture =
+        Texture::from_image(&mut texture_context, &canvas, &TextureSettings::new()).unwrap();
 
     while let Some(e) = window.next() {
         if e.render_args().is_some() {
@@ -182,71 +178,39 @@ fn main() {
                 image(&texture, c.transform, g);
             });
         }
-        if let Some(button) = e.press_args() {
-            if button == Button::Mouse(MouseButton::Left) {
-                redraw = true;
-            }
-        };
         if let Some(button) = e.release_args() {
-            if button == Button::Mouse(MouseButton::Left) {
-                redraw = false;
-                last_pos = None
-            }
             if button == Button::Keyboard(Key::Left) {
                 view.step_left();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::Right) {
                 view.step_right();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::Up) {
                 view.step_up();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::Down) {
                 view.step_down();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::Z) {
                 view.step_zoom_in();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::A) {
                 view.step_zoom_out();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::X) {
                 view.sharpen();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
             if button == Button::Keyboard(Key::S) {
                 view.unsharpen();
-                draw(&view, &mut canvas);
+                canvas = draw_fast(&view, width, height);
             }
         };
-        if redraw {
-            if let Some(pos) = e.mouse_cursor_args() {
-                let (x, y) = (pos[0] as f32, pos[1] as f32);
-
-                if let Some(p) = last_pos {
-                    let (last_x, last_y) = (p[0] as f32, p[1] as f32);
-                    let distance = vec2_len(vec2_sub(p, pos)) as u32;
-
-                    for i in 0..distance {
-                        let diff_x = x - last_x;
-                        let diff_y = y - last_y;
-                        let delta = i as f32 / distance as f32;
-                        let new_x = (last_x + (diff_x * delta)) as u32;
-                        let new_y = (last_y + (diff_y * delta)) as u32;
-                        if new_x < width && new_y < height {
-                            canvas.put_pixel(new_x, new_y, im::Rgba([255, 0, 0, 255]));
-                        };
-                    }
-                };
-
-                last_pos = Some(pos)
-            };
-        }
     }
 }
