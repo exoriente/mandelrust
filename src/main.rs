@@ -100,7 +100,7 @@ fn z_to_color(z: i32, steps: u32) -> Color {
         [0, 0, 0, 255]
     } else {
         let red = ((255. / steps as f64) * z as f64) as u8;
-        [red, red, red, 255]
+        [red, 0, 0, 255]
     }
 }
 
@@ -164,7 +164,7 @@ fn main() {
         .unwrap();
 
     let mut view = View {
-        r: -0.5,
+        r: -0.75,
         i: 0.,
         zoom: 300.,
         sharpness: 30,
