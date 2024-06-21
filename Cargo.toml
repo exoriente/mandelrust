@@ -6,6 +6,6 @@ edition = "2021"
 [dependencies]
 image = "0.25.1"
 itertools = "0.13.0"
+nonempty = "0.10.0"
 piston_window = "0.132.0"
 rayon = "1.10.0"
-vecmath = "1.0.0"

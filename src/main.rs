@@ -1,79 +1,24 @@
 extern crate image as im;
 extern crate itertools;
+extern crate nonempty;
 extern crate piston_window;
 extern crate rayon;
-extern crate vecmath;
 
-use itertools::iproduct;
+use itertools::{iproduct, Itertools};
+use nonempty::nonempty;
 use piston_window::*;
 use rayon::prelude::*;
-use std::{cmp::{max, min}, str::FromStr};
 
+mod all_between;
 mod complex;
 mod settings;
+mod view;
 
+use all_between::AllBetween;
 use complex::Complex;
+use view::View;
 
 type Color = [u8; 4];
-
-struct View {
-    r: f64,
-    i: f64,
-    zoom: f64,
-    sharpness: u32,
-}
-
-impl View {
-    fn pixel_to_complex(self: &View, canvas_size: (u32, u32), pixel: (u32, u32)) -> Complex {
-        let (width, height) = canvas_size;
-        let (x, y) = pixel;
-        Complex {
-            r: (x as f64 - width as f64 / 2.) / self.zoom + self.r,
-            i: (height as f64 / 2. - y as f64) / self.zoom + self.i,
-        }
-    }
-
-    fn step_left(self: &mut View) {
-        self.r -= settings::STEP_SIZE / self.zoom;
-    }
-
-    fn step_right(self: &mut View) {
-        self.r += settings::STEP_SIZE / self.zoom;
-    }
-
-    fn step_up(self: &mut View) {
-        self.i += settings::STEP_SIZE / self.zoom;
-    }
-
-    fn step_down(self: &mut View) {
-        self.i -= settings::STEP_SIZE / self.zoom;
-    }
-
-    fn step_zoom_in(self: &mut View) {
-        self.zoom *= settings::ZOOM_STEP_SIZE;
-    }
-
-    fn step_zoom_out(self: &mut View) {
-        self.zoom /= settings::ZOOM_STEP_SIZE;
-    }
-
-    fn zoom_by(self: &mut View, zoom_factor: f64) {
-        self.zoom *= zoom_factor;
-    }
-
-    fn sharpen(self: &mut View) {
-        self.sharpness += 10;
-    }
-
-    fn unsharpen(self: &mut View) {
-        self.sharpness -= 10;
-    }
-
-    fn center_on(self: &mut View, c: Complex) {
-        self.r = c.r;
-        self.i = c.i;
-    }
-}
 
 fn circle(c: Complex, iterations: u32) -> i32 {
     let d = (c.r * c.r + c.i * c.i).sqrt();
@@ -104,45 +49,22 @@ fn z_to_color(z: i32, steps: u32) -> Color {
     }
 }
 
-fn draw_fast(view: &View, width: u32, height: u32) -> im::ImageBuffer<im::Rgba<u8>, Vec<u8>> {
-    let all_x = 0..width;
-    let all_y = 0..height;
-
-    let pixels = iproduct!(all_x, all_y)
-        .par_bridge()
-        .map(|(x, y)| {
-            (
-                x,
-                y,
-                z_to_color(
-                    mandelbrot(
-                        view.pixel_to_complex((width, height), (x, y)),
-                        view.sharpness,
-                    ),
-                    view.sharpness,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let mut canvas = im::ImageBuffer::new(width, height);
-
-    for (x, y, color) in pixels {
-        canvas.put_pixel(x, y, im::Rgba(color));
-    }
-
-    return canvas;
-}
-
-fn draw_texture(view: &View, width: u32, height: u32) -> im::ImageBuffer<im::Rgba<u8>, Vec<u8>> {
+fn draw_image(
+    view: &View,
+    width: u32,
+    height: u32,
+    function: fn(Complex, u32) -> i32,
+) -> im::RgbaImage {
     let all_x = 0..width;
     let all_y = 0..height;
 
     let pixels = iproduct!(all_y, all_x)
+        .collect_vec()
+        .par_iter()
         .map(|(y, x)| {
             z_to_color(
-                mandelbrot(
-                    view.pixel_to_complex((width, height), (x, y)),
+                function(
+                    view.pixel_to_complex((width, height), (*x, *y)),
                     view.sharpness,
                 ),
                 view.sharpness,
@@ -163,14 +85,22 @@ fn main() {
         .build()
         .unwrap();
 
-    let mut view = View {
+    let mut views = nonempty![View {
         r: -0.75,
         i: 0.,
         zoom: 300.,
         sharpness: 30,
+    }];
+
+    let function: fn(Complex, u32) -> i32 = if settings::FUNCTION == "CIRCLE" {
+        circle
+    } else {
+        mandelbrot
     };
 
-    let mut base_canvas = draw_fast(&view, width, height);
+    let draw = |view: &View| draw_image(view, width, height, function);
+
+    let mut base_canvas = draw(views.last());
     let mut overlay = base_canvas.clone();
     let mut canvas = &base_canvas;
 
@@ -201,73 +131,87 @@ fn main() {
         if let Some(button) = e.release_args() {
             if press_position == None {
                 if button == Button::Keyboard(Key::Left) {
-                    view.step_left();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_left());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::Right) {
-                    view.step_right();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_right());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::Up) {
-                    view.step_up();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_up());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::Down) {
-                    view.step_down();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_down());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::Z) {
-                    view.step_zoom_in();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_zoom_in());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::A) {
-                    view.step_zoom_out();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().step_zoom_out());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
-                if button == Button::Keyboard(Key::X) {
-                    view.sharpen();
-                    base_canvas = draw_fast(&view, width, height);
+                if button == Button::Keyboard(Key::X) {                    
+                    let new_view = views.last().sharpen();
+                    if views.len() > 1 {
+                        views.pop();
+                    }
+                    views.push(new_view);
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::S) {
-                    view.unsharpen();
-                    base_canvas = draw_fast(&view, width, height);
+                    let new_view = views.last().unsharpen();
+                    if views.len() > 1 {
+                        views.pop();
+                    }
+                    views.push(new_view);
+                    base_canvas = draw(views.last());
+                    canvas = &base_canvas;
+                }
+                if button == Button::Keyboard(Key::Backspace) {
+                    views.pop();
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                 }
                 if button == Button::Keyboard(Key::Q) {
                     break;
                 }
                 if button == Button::Keyboard(Key::F1) {
-                    println!("Zoom factor: {}", view.zoom);
-                    println!("Iterations: {}", view.sharpness);
+                    println!("Zoom factor: {}", views.last().zoom);
+                    println!("Iterations: {}", views.last().sharpness);
                 }
             }
             if button == Button::Mouse(MouseButton::Left) {
                 if press_position == Some(mouse_position) {
-                    let c = view.pixel_to_complex(
+                    let c = views.last().pixel_to_complex(
                         (width, height),
                         (mouse_position.0 as u32, mouse_position.1 as u32),
                     );
-                    view.center_on(c);
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().center_on(c));
+                    base_canvas = draw(views.last());
+
                     canvas = &base_canvas;
                     press_position = None;
                 } else if let Some(base_pos) = press_position {
                     let (x1, y1) = (base_pos.0 as u32, base_pos.1 as u32);
                     let (x2, y2) = (mouse_position.0 as u32, mouse_position.1 as u32);
 
-                    let selected_width = max(x1, x2) - min(x1, x2);
-                    let selected_height = max(y1, y2) - min(y1, y2);
+                    let selected_width = x1.abs_diff(x2);
+                    let selected_height = y1.abs_diff(y2);
 
-                    let new_center =
-                        view.pixel_to_complex((width, height), ((x1 + x2) / 2, (y1 + y2) / 2));
-                    view.center_on(new_center);
+                    let new_center = views
+                        .last()
+                        .pixel_to_complex((width, height), ((x1 + x2) / 2, (y1 + y2) / 2));
 
                     let zoom_factor_x = width as f64 / selected_width as f64;
                     let zoom_factor_y = height as f64 / selected_height as f64;
@@ -276,22 +220,21 @@ fn main() {
                     } else {
                         zoom_factor_y
                     };
-                    view.zoom_by(zoom_factor);
+                    views.push(views.last().center_on(new_center).zoom_by(zoom_factor));
 
-                    base_canvas = draw_fast(&view, width, height);
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                     press_position = None;
                 }
             }
             if button == Button::Mouse(MouseButton::Right) {
                 if press_position.is_none() {
-                    let c = view.pixel_to_complex(
+                    let c = views.last().pixel_to_complex(
                         (width, height),
                         (mouse_position.0 as u32, mouse_position.1 as u32),
                     );
-                    view.center_on(c);
-                    view.step_zoom_out();
-                    base_canvas = draw_fast(&view, width, height);
+                    views.push(views.last().center_on(c).step_zoom_out());
+                    base_canvas = draw(views.last());
                     canvas = &base_canvas;
                     press_position = None;
                 }
@@ -307,11 +250,11 @@ fn main() {
                     let (x2, y2) = (mouse_position.0 as u32, mouse_position.1 as u32);
 
                     overlay = base_canvas.clone();
-                    for x in min(x1, x2)..max(x1, x2) {
+                    for x in x1.all_between(x2) {
                         overlay.put_pixel(x, y1, im::Rgba([192, 192, 192, 255]));
                         overlay.put_pixel(x, y2, im::Rgba([192, 192, 192, 255]));
                     }
-                    for y in min(y1, y2)..max(y1, y2) {
+                    for y in y1.all_between(y2) {
                         overlay.put_pixel(x1, y, im::Rgba([192, 192, 192, 255]));
                         overlay.put_pixel(x2, y, im::Rgba([192, 192, 192, 255]));
                     }
