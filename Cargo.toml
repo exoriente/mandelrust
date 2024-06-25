@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+astro-float = "0.9.4"
 image = "0.25.1"
 itertools = "0.13.0"
 nonempty = "0.10.0"

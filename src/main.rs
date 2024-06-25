@@ -1,9 +1,11 @@
+extern crate astro_float;
 extern crate image as im;
 extern crate itertools;
 extern crate nonempty;
 extern crate piston_window;
 extern crate rayon;
 
+use astro_float::{BigFloat, RoundingMode};
 use itertools::{iproduct, Itertools};
 use nonempty::nonempty;
 use piston_window::*;
@@ -29,7 +31,7 @@ fn circle(c: Complex, iterations: u32) -> i32 {
     }
 }
 
-fn mandelbrot(c: Complex, iterations: u32) -> i32 {
+fn mandelbrot_naive(c: Complex, iterations: u32) -> i32 {
     let mut z = Complex { r: 0., i: 0. };
     for i in 0..iterations {
         z = z * z + c;
@@ -38,6 +40,24 @@ fn mandelbrot(c: Complex, iterations: u32) -> i32 {
         }
     }
     return -1;
+}
+
+fn mandelbrot_optimized(c: Complex, iterations: u32) -> i32 {
+    let mut x = 0.;
+    let mut y = 0.;
+    let mut x2 = 0.;
+    let mut y2 = 0.;
+
+    for i in 0..iterations {
+        y = (x + x) * y + c.i;
+        x = x2 - y2 + c.r;
+        x2 = x * x;
+        y2 = y * y;
+        if x2 + y2 > 4. {
+            return i as i32;
+        }
+    }
+    -1
 }
 
 fn z_to_color(z: i32, steps: u32) -> Color {
@@ -95,7 +115,7 @@ fn main() {
     let function: fn(Complex, u32) -> i32 = if settings::FUNCTION == "CIRCLE" {
         circle
     } else {
-        mandelbrot
+        mandelbrot_optimized
     };
 
     let draw = |view: &View| draw_image(view, width, height, function);
@@ -189,6 +209,24 @@ fn main() {
                 if button == Button::Keyboard(Key::F1) {
                     println!("Zoom factor: {}", views.last().zoom);
                     println!("Iterations: {}", views.last().sharpness);
+                }
+                if button == Button::Keyboard(Key::F2) {
+                    let p = 32;
+                    let x = BigFloat::from_f64(views.last().pixel_to_complex((width, height), (0, 0)).r, p);
+                    let z = BigFloat::from_f64(views.last().zoom, p);
+                    let y = x.add(&(z.reciprocal(p, RoundingMode::None)), p, RoundingMode::None);
+                    let d = y.sub(&x, p, RoundingMode::None);
+                    println!("Big Float zoom: {}", z);                    
+                    println!("Big Float inverse zoom: {}", z.reciprocal(p, RoundingMode::None));                    
+                    println!("Big Float difference: {}", d);
+                    let relative_difference = z.reciprocal(p, RoundingMode::None).div(&d, p, RoundingMode::None);
+                    let ub = BigFloat::from_f64(1001., p).div(&(BigFloat::from_f64(1000., p)), p, RoundingMode::None);
+                    let lb = BigFloat::from_f64(1000., p).div(&(BigFloat::from_f64(1001., p)), p, RoundingMode::None);
+                    if relative_difference > ub || relative_difference < lb {
+                        println!("BAD!");
+                    } else {
+                        println!("GOOD!");
+                    }
                 }
             }
             if button == Button::Mouse(MouseButton::Left) {
